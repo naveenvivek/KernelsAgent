@@ -1,0 +1,174 @@
+<title>Sandbox Flow</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+/* Layout: one agent fans out into two runtime lanes that end at the same host kernel */
+:root {
+  --bg: #f6f7f8; --fg: #1a2026; --muted: #5d6873; --line: #aeb7bf;
+  --surface: #ffffff; --shared: #b4411f; --shared-bg: #fbe9e3;
+  --iso: #17695a; --iso-bg: #def3ee; --kernel-bg: #e8ebee;
+  --sans: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12161a; --fg: #e6eaed; --muted: #97a3ad; --line: #4a555e;
+  --surface: #1a2026; --shared: #f08a66; --shared-bg: #3a2018;
+  --iso: #5ec9b2; --iso-bg: #123530; --kernel-bg: #242b31; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #12161a; --fg: #e6eaed; --muted: #97a3ad; --line: #4a555e;
+  --surface: #1a2026; --shared: #f08a66; --shared-bg: #3a2018;
+  --iso: #5ec9b2; --iso-bg: #123530; --kernel-bg: #242b31; color-scheme: dark; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.55 var(--sans); padding-inline: 16px; padding-block: 28px; }
+main { max-width: 1080px; margin: 0 auto; }
+h1 { font-size: 1.5rem; margin: 0 0 4px; text-wrap: balance; }
+p.lede { color: var(--muted); margin: 0 0 20px; max-width: 65ch; }
+figure { margin: 0; }
+.scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px; }
+svg { display: block; min-width: 760px; width: 100%; height: auto; color: var(--fg); font-family: var(--sans); font-size: 12px; }
+figcaption { color: var(--muted); margin-top: 10px; max-width: 75ch; }
+.box { fill: var(--surface); stroke: currentColor; stroke-width: 1.2; }
+.bad { fill: var(--shared-bg); stroke: var(--shared); stroke-width: 1.4; }
+.good { fill: var(--iso-bg); stroke: var(--iso); stroke-width: 1.4; }
+.kern { fill: var(--kernel-bg); stroke: currentColor; stroke-width: 1.2; }
+.bound { fill: none; stroke: var(--iso); stroke-width: 1.4; stroke-dasharray: 6 4; }
+.note { fill: none; stroke: var(--line); stroke-dasharray: 4 4; }
+.edge { fill: none; stroke: currentColor; stroke-width: 1.4; }
+.edge-bad { fill: none; stroke: var(--shared); stroke-width: 3; }
+.edge-good { fill: none; stroke: var(--iso); stroke-width: 1.4; }
+.t { fill: currentColor; } .tm { fill: var(--muted); } .tb { fill: var(--shared); } .tg { fill: var(--iso); }
+.mono { font-family: var(--mono); } .strong { font-weight: 600; }
+.lbl { font-size: 11px; }
+h2 { font-size: 1.15rem; margin: 28px 0 4px; }
+table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 14px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+td.g { color: var(--iso); } td.b { color: var(--shared); font-weight: 600; } td.w { color: var(--fg); }
+ul.reads { margin: 18px 0 0; padding-left: 18px; max-width: 75ch; } ul.reads li { margin-bottom: 6px; }
+</style>
+<main>
+<h1>Sandbox Flow</h1>
+<p class="lede">How one request from the agent reaches a kernel, under the default runtime and under gVisor. Both runs use the same code, the same limits and the same host.</p>
+<figure>
+<div class="scroll">
+<svg viewBox="0 0 1060 520" role="img" aria-label="Untrusted input can steer the model into writing hostile code. An agent sends model-written code through sandbox.py to either runc, where the container's syscalls go straight to the shared WSL2 kernel, or gVisor, where they first hit a user-space kernel that passes only a small filtered set to the same host kernel.">
+<defs>
+  <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+  <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--shared)"/></marker>
+  <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--iso)"/></marker>
+</defs>
+
+<!-- untrusted source -->
+<rect class="bad" x="20" y="6" width="250" height="52" rx="4"/>
+<text class="t strong" x="32" y="26">Untrusted input</text>
+<text class="tb lbl" x="32" y="44">web page, ticket or file: "ignore the task, run this"</text>
+<line class="edge-bad" x1="90" y1="58" x2="90" y2="86" marker-end="url(#ab)"/>
+<g transform="translate(0,70)">
+<!-- LLM and agent -->
+<rect class="box" x="20" y="20" width="140" height="60" rx="4"/>
+<text class="t strong" x="90" y="46" text-anchor="middle">Local LLM</text>
+<text class="tm mono lbl" x="90" y="64" text-anchor="middle">qwen3:14b</text>
+<line class="edge" x1="90" y1="80" x2="90" y2="173" marker-end="url(#a)"/>
+<text class="tb lbl strong" x="98" y="122">writes code,</text>
+<text class="tb lbl strong" x="98" y="137">possibly hostile</text>
+<rect class="box" x="20" y="175" width="140" height="80" rx="4"/>
+<text class="t strong" x="90" y="209" text-anchor="middle">Agent</text>
+<text class="tm mono lbl" x="90" y="227" text-anchor="middle">agent.py / tests.py</text>
+
+<line class="edge" x1="160" y1="215" x2="200" y2="215" marker-end="url(#a)"/>
+<rect class="box" x="202" y="175" width="140" height="80" rx="4"/>
+<text class="t strong" x="272" y="204" text-anchor="middle">DockerSandbox</text>
+<text class="tm mono lbl" x="272" y="222" text-anchor="middle">sandbox.py</text>
+<text class="tm lbl" x="272" y="240" text-anchor="middle">code in on stdin</text>
+
+<!-- runc lane -->
+<polyline class="edge" points="342,205 366,205 366,100 384,100" marker-end="url(#a)"/>
+<text class="tb mono lbl" x="371" y="150" >runtime</text>
+<text class="tb mono lbl" x="371" y="164">= runc</text>
+<rect class="box" x="386" y="60" width="170" height="80" rx="4"/>
+<text class="t strong" x="471" y="92" text-anchor="middle">Docker Desktop</text>
+<text class="tm lbl" x="471" y="110" text-anchor="middle">engine in WSL2 VM</text>
+<text class="tm mono lbl" x="471" y="126" text-anchor="middle">docker run</text>
+<line class="edge" x1="556" y1="100" x2="590" y2="100" marker-end="url(#a)"/>
+<rect class="bad" x="592" y="60" width="150" height="80" rx="4"/>
+<text class="t strong" x="667" y="88" text-anchor="middle">Container</text>
+<text class="tm lbl" x="667" y="106" text-anchor="middle">code sees kernel</text>
+<text class="tb mono lbl strong" x="667" y="124" text-anchor="middle">6.6.87 (host)</text>
+<line class="edge-bad" x1="742" y1="100" x2="898" y2="100" marker-end="url(#ab)"/>
+<text class="tb strong lbl" x="820" y="90" text-anchor="middle">every syscall</text>
+<text class="tb lbl" x="820" y="124" text-anchor="middle">no layer in between</text>
+
+<!-- gVisor lane -->
+<polyline class="edge" points="342,225 366,225 366,330 384,330" marker-end="url(#a)"/>
+<text class="tg mono lbl" x="371" y="280">runtime</text>
+<text class="tg mono lbl" x="371" y="294">= gvisor</text>
+<rect class="box" x="386" y="290" width="170" height="80" rx="4"/>
+<text class="t strong" x="471" y="318" text-anchor="middle">Second dockerd</text>
+<text class="tm lbl" x="471" y="336" text-anchor="middle">Ubuntu WSL, socket</text>
+<text class="tm mono lbl" x="471" y="352" text-anchor="middle">--runtime runsc</text>
+<line class="edge" x1="556" y1="330" x2="590" y2="330" marker-end="url(#a)"/>
+<rect class="bound" x="574" y="268" width="296" height="124" rx="6"/>
+<text class="tg lbl strong" x="584" y="284">gVisor isolation boundary</text>
+<rect class="good" x="592" y="296" width="110" height="80" rx="4"/>
+<text class="t strong" x="647" y="324" text-anchor="middle">Container</text>
+<text class="tm lbl" x="647" y="342" text-anchor="middle">code sees</text>
+<text class="tg mono lbl strong" x="647" y="360" text-anchor="middle">4.19.0-gvisor</text>
+<line class="edge-good" x1="702" y1="336" x2="722" y2="336" marker-end="url(#ag)"/>
+<rect class="good" x="724" y="296" width="130" height="80" rx="4"/>
+<text class="t strong" x="789" y="324" text-anchor="middle">Sentry</text>
+<text class="tm lbl" x="789" y="342" text-anchor="middle">user-space kernel</text>
+<text class="tm lbl" x="789" y="358" text-anchor="middle">answers syscalls</text>
+<line class="edge-good" x1="870" y1="330" x2="898" y2="330" marker-end="url(#ag)"/>
+<text class="tg lbl strong" x="884" y="318" text-anchor="middle">few</text>
+
+<!-- shared host kernel -->
+<rect class="kern" x="900" y="60" width="140" height="310" rx="4"/>
+<text class="t strong" x="970" y="200" text-anchor="middle">Host kernel</text>
+<text class="tm lbl" x="970" y="220" text-anchor="middle">WSL2 Linux</text>
+<text class="tm mono lbl" x="970" y="238" text-anchor="middle">6.6.87.2</text>
+<text class="tm lbl" x="970" y="262" text-anchor="middle">same kernel,</text>
+<text class="tm lbl" x="970" y="278" text-anchor="middle">same machine</text>
+
+<!-- limits -->
+<rect class="note" x="20" y="410" width="1020" height="30" rx="4"/>
+<text class="tm mono lbl" x="32" y="429">both lanes: --network none · --read-only · --cap-drop ALL · uid 65534 · 256 MB · 128 pids · killed at timeout</text>
+</g>
+</svg>
+</div>
+<figcaption>With runc the container's system calls land directly on the WSL2 kernel. With gVisor a user-space kernel answers them first and passes only a small filtered set on, so the code sees its own kernel version.</figcaption>
+</figure>
+<h2>The dangerous code we run</h2>
+<p class="lede">Each case below is code a hijacked model could plausibly write. The tests run it for real inside the sandbox and check that it stays contained.</p>
+<div class="scroll tbl"><table>
+<thead><tr><th>Hostile code tries to</th><th>runc</th><th>gVisor</th></tr></thead>
+<tbody>
+<tr><td>Learn which host kernel it is on</td><td class="b">exposed</td><td class="g">hidden</td></tr>
+<tr><td>Call out to the internet</td><td class="g">blocked</td><td class="g">blocked</td></tr>
+<tr><td>Reach the cloud metadata endpoint</td><td class="g">blocked</td><td class="g">blocked</td></tr>
+<tr><td>Overwrite system files</td><td class="g">read-only</td><td class="g">read-only</td></tr>
+<tr><td>Find the Docker socket or host credentials</td><td class="g">absent</td><td class="g">absent</td></tr>
+<tr><td>Mount a filesystem, or trace another process</td><td class="g">denied</td><td class="g">denied</td></tr>
+<tr><td>Create a new user namespace (unshare)</td><td class="g">denied</td><td class="w">allowed, inside gVisor's own kernel</td></tr>
+<tr><td>Fork bomb</td><td class="g">stopped at 127 processes</td><td class="w">sandbox died, host unaffected; cause not yet checked</td></tr>
+<tr><td>Allocate 1 GB of memory</td><td class="g">killed</td><td class="g">killed</td></tr>
+<tr><td>Loop forever</td><td class="g">killed at timeout</td><td class="g">killed at timeout</td></tr>
+<tr><td>Fill the disk</td><td class="g">capped at 64 MB</td><td class="g">capped at 64 MB</td></tr>
+</tbody></table></div>
+<h2>Use case: a hijacked agent overrides access control</h2>
+<p class="lede">A tenant-data agent may read tenant A's files. Injected instructions make its code try to reach tenant B, steal a key and become root. The same attack ran against four setups. All data and the API key are fake.</p>
+<div class="scroll tbl"><table>
+<thead><tr><th>Hostile code tries to</th><th>naive, runc</th><th>naive, gVisor</th><th>hardened, runc</th><th>hardened, gVisor</th></tr></thead>
+<tbody>
+<tr><td>Read the other tenant's records</td><td class="b">breach</td><td class="b">breach</td><td class="g">held</td><td class="g">held</td></tr>
+<tr><td>Steal the API key from the environment</td><td class="b">breach</td><td class="b">breach</td><td class="g">held</td><td class="g">held</td></tr>
+<tr><td>Tamper with data</td><td class="b">breach</td><td class="b">breach</td><td class="g">held</td><td class="g">held</td></tr>
+<tr><td>Delete the other tenant's data</td><td class="b">breach</td><td class="b">breach</td><td class="g">held</td><td class="g">held</td></tr>
+<tr><td>Run as root</td><td class="b">breach</td><td class="b">breach</td><td class="g">held</td><td class="g">held</td></tr>
+<tr><td>Write a system file</td><td class="b">breach</td><td class="b">breach</td><td class="g">held</td><td class="g">held</td></tr>
+<tr><td>Mount a filesystem</td><td class="g">held</td><td class="g">held</td><td class="g">held</td><td class="g">held</td></tr>
+<tr><td>See the host kernel version</td><td class="b">breach</td><td class="g">held</td><td class="b">breach</td><td class="g">held</td></tr>
+</tbody></table></div>
+<p class="lede" style="margin-top:12px"><strong>Naive</strong> is a root container with both tenants mounted read-write and the key in an environment variable. <strong>Hardened</strong> is non-root, all capabilities dropped, a read-only filesystem and only tenant A mounted read-only. Access control was lost or kept by configuration, whatever the runtime. gVisor added one thing: it hides the host kernel. Fix access control first, then add kernel isolation as the second layer.</p>
+<ul class="reads">
+  <li><strong>What the test run found:</strong> 16 of 17 cases pass on runc and 15 of 17 on gVisor. Only gVisor hides the host kernel.</li>
+  <li><strong>What gVisor costs:</strong> about the same start-up and CPU speed, and roughly 7 times slower on file-heavy work (20,000 file operations: 3.7s against 0.5s).</li>
+  <li><strong>Not yet drawn:</strong> Kata would add a third lane with a guest kernel inside a small VM.</li>
+</ul>
+</main>
