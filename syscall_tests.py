@@ -1,6 +1,6 @@
-"""Single-container syscall demo: same code run on runc vs gVisor, no second
-container needed. Shows what gVisor changes about what a syscall can even
-reach, independent of any kernel CVE. Reuses DockerSandbox from sandbox.py."""
+"""Shared test-case definitions for the syscall demo. Not run directly —
+run `syscall_demo_runc.py` or `syscall_demo_gvisor.py`, each runs these same
+4 cases against its own single runtime so the two results can be compared."""
 import subprocess, uuid
 from sandbox import DockerSandbox, DOCKER
 
@@ -15,7 +15,7 @@ def host_kernel():
 def run_unhardened(rt, code, timeout=15):
     """Same as DockerSandbox.run, but keeps Docker's DEFAULT capabilities
     (no --cap-drop ALL, no --read-only, no --user) so cases 3/4 show what
-    gVisor blocks structurally, not what --cap-drop already blocked.
+    each runtime blocks on its own, not what --cap-drop already blocked.
     Network stays 'none' and resources stay capped for safety."""
     cname = "sbx-unhardened-" + uuid.uuid4().hex[:8]
     cmd = [*DOCKER[rt], "run", "--rm", "-i", "--name", cname,
@@ -70,7 +70,7 @@ TESTCASES = {
 ),
 
 "testcase3_unshare_mount": (
-    "unshare() and mount() — run WITHOUT --cap-drop, to show gVisor's own limit",
+    "unshare() and mount() — run WITHOUT --cap-drop, to show each runtime's own limit",
     "import ctypes\n"
     "l = ctypes.CDLL(None, use_errno=True)\n"
     "u = l.unshare(0x10000000)  # CLONE_NEWNET\n"
@@ -105,18 +105,18 @@ TESTCASES = {
 }
 
 
-def main():
-    print("[setup] checking which runtimes are reachable ...")
-    rts = [rt for rt in ("runc", "gvisor") if available(rt)]
-    skipped = [rt for rt in ("runc", "gvisor") if rt not in rts]
+def run_for(rt):
+    """Run all test cases for a single runtime and print the results.
+    Shared by syscall_demo_runc.py and syscall_demo_gvisor.py."""
+    print(f"[setup] checking whether runtime '{rt}' is reachable ...")
+    if not available(rt):
+        print(f"[setup] '{rt}' is NOT reachable — its dockerd is likely not running.")
+        if rt == "gvisor":
+            print("[setup] start it with: wsl -d Ubuntu -u root -- bash setup-gvisor.sh")
+        return
     h = host_kernel()
-    print(f"[setup] host kernel     : {h}")
-    print(f"[setup] runtimes found  : {rts}")
-    print(f"[setup] runtimes missing: {skipped}")
-    if skipped:
-        print(f"[setup] note: {skipped} unavailable (its dockerd is likely not running) — continuing with {rts} only\n")
-    else:
-        print()
+    print(f"[setup] host kernel : {h}")
+    print(f"[setup] runtime     : {rt}\n")
 
     for key, (label, code, note, hardened) in TESTCASES.items():
         mode = "hardened (cap-drop ALL, read-only, non-root)" if hardened else "UNHARDENED (Docker default caps/user)"
@@ -124,17 +124,12 @@ def main():
         print(key, "-", label)
         print("mode:", mode)
         print("=" * 70)
-        for rt in rts:
-            print(f"[run] starting container on '{rt}' ...")
-            r = DockerSandbox(rt).run(code) if hardened else run_unhardened(rt, code)
-            print(f"[run] container on '{rt}' finished, exit={r['exit']}")
-            print(f"\n[{rt}] stdout:")
-            print(r["stdout"] or "(no stdout)")
-            if r["stderr"]:
-                print(f"[{rt}] stderr:", r["stderr"][:300])
-            print(f"[{rt}] verdict ->", note(r, h))
+        print(f"[run] starting container on '{rt}' ...")
+        r = DockerSandbox(rt).run(code) if hardened else run_unhardened(rt, code)
+        print(f"[run] container on '{rt}' finished, exit={r['exit']}")
+        print(f"\n[{rt}] stdout:")
+        print(r["stdout"] or "(no stdout)")
+        if r["stderr"]:
+            print(f"[{rt}] stderr:", r["stderr"][:300])
+        print(f"[{rt}] verdict ->", note(r, h))
         print()
-
-
-if __name__ == "__main__":
-    main()

@@ -12,7 +12,9 @@ Inspired by the article "Your AI agent just wrote some code. Where should it run
 | `llm.py` | OpenAI-compatible client for Ollama / LM Studio |
 | `tests.py` | 17 hostile, compatibility and performance cases, compared per runtime |
 | `access_demo.py` | Use case: a hijacked agent tries to override access control, 4 setups (naive/hardened x runc/gVisor) |
-| `syscall_demo.py` | Single-container, no-sharing demo: 4 test cases showing exactly what gVisor changes about syscall behavior, independent of any kernel CVE |
+| `syscall_tests.py` | Shared test-case definitions for the syscall demo (not run directly) |
+| `syscall_demo_runc.py` | Runs the 4 syscall test cases against `runc` only |
+| `syscall_demo_gvisor.py` | Runs the same 4 test cases against `gvisor` only |
 | `setup-gvisor.sh` | Installs gVisor and a second dockerd in Ubuntu WSL (Docker Desktop can't take custom runtimes) |
 | `flow.html` | Flow diagram and results |
 
@@ -22,7 +24,8 @@ python agent.py --task kernel
 python agent.py --runtime gvisor --ask "print the first 10 primes"
 python tests.py
 python access_demo.py
-python syscall_demo.py
+python syscall_demo_runc.py
+python syscall_demo_gvisor.py
 ```
 gVisor setup (WSL2): `wsl -d Ubuntu -u root -- bash /mnt/d/VSCode/KernelsAgent/setup-gvisor.sh` (adjust the path).
 
@@ -32,9 +35,9 @@ gVisor setup (WSL2): `wsl -d Ubuntu -u root -- bash /mnt/d/VSCode/KernelsAgent/s
 - gVisor is about 7x slower on file-heavy work in these tests.
 - Open: fork bomb kills the gVisor sandbox (cause not checked); `unshare` is allowed inside gVisor's own kernel (see below). Kata not yet tested.
 
-## `syscall_demo.py` — what gVisor actually changes, without any kernel exploit
+## `syscall_demo_runc.py` / `syscall_demo_gvisor.py` — what gVisor actually changes, without any kernel exploit
 
-A container escape via a kernel CVE is one threat model, but it needs an unpatched bug to exist. A separate, always-present gap is simpler: on `runc`, a container's syscalls go straight to the real host kernel, so even *working-as-designed* syscalls can leak host identity, hardware info, and (if the container isn't hardened) real privileges. `syscall_demo.py` isolates this from the CVE question entirely — it uses one plain container at a time, run twice (once per runtime), no second container, no shared namespace, no exploit. Host kernel for this run: `6.18.54.1-microsoft-standard-WSL2` (runc) vs gVisor's own fake `4.19.0-gvisor`.
+A container escape via a kernel CVE is one threat model, but it needs an unpatched bug to exist. A separate, always-present gap is simpler: on `runc`, a container's syscalls go straight to the real host kernel, so even *working-as-designed* syscalls can leak host identity, hardware info, and (if the container isn't hardened) real privileges. These two scripts isolate this from the CVE question entirely — each runs the same 4 test cases (defined once, in `syscall_tests.py`) against a single runtime, one plain container at a time. No second container, no shared namespace, no exploit — run both scripts and diff the output. Host kernel for this run: `6.18.54.1-microsoft-standard-WSL2` (runc) vs gVisor's own fake `4.19.0-gvisor`.
 
 **Test 1 — kernel fingerprinting** (`platform.release()`, `/proc/version`), hardened container (`--cap-drop ALL`, read-only, non-root, `--network none`):
 
