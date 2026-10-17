@@ -7,9 +7,13 @@ Experiment: what does gVisor actually change about syscall behavior, compared to
 | File | Purpose |
 |---|---|
 | `sandbox.py` | `DockerSandbox(runtime)`: runs code in a locked-down container; the runtime is the only thing that changes |
-| `syscall_tests.py` | Shared test-case definitions (not run directly) |
-| `syscall_demo_runc.py` | Runs the test cases against `runc` only |
-| `syscall_demo_gvisor.py` | Runs the same test cases against `gvisor` only |
+| `syscall_tests.py` | Shared, hardcoded test-case definitions (not run directly) |
+| `syscall_demo_runc.py` | Runs the hardcoded test cases against `runc` only |
+| `syscall_demo_gvisor.py` | Runs the hardcoded test cases against `gvisor` only |
+| `llm.py` | OpenAI-compatible client for a local LLM (Ollama or LM Studio) |
+| `syscall_agent_tests.py` | Same 4 probes, but an LLM writes the code; logs the full prompt and the model's raw output before running it |
+| `syscall_agent_demo_runc.py` | Runs the LLM-written probes against `runc` only |
+| `syscall_agent_demo_gvisor.py` | Runs the LLM-written probes against `gvisor` only |
 | `setup-gvisor.sh` | Installs gVisor and starts a second, separate dockerd in Ubuntu WSL (Docker Desktop can't take custom runtimes) |
 
 ## Setup
@@ -22,11 +26,20 @@ wsl -d Ubuntu -u root -- bash /mnt/d/VSCode/KernelsAgent/setup-gvisor.sh
 
 ## Run
 
+Hardcoded version (deterministic, same code every run):
 ```
 python syscall_demo_runc.py
 python syscall_demo_gvisor.py
 ```
-Run both and compare the output — that comparison is the actual experiment.
+
+LLM-written version (a local model writes the probe code itself, from a plain English request — the same thing a real coding agent might be asked to do). Requires Ollama or LM Studio running locally (`--llm ollama` is the default; see `llm.py` for model names):
+```
+python syscall_agent_demo_runc.py
+python syscall_agent_demo_gvisor.py
+```
+Each run prints the exact prompt sent to the model, the exact code the model wrote back, and saves both to `logs/<testcase>_<runtime>_<timestamp>.log` before that code ever runs in the sandbox — so what the LLM saw and chose to write is fully visible, not just the end result.
+
+Run both runc and gVisor (either version) and compare the output — that comparison is the actual experiment.
 
 ## Test cases
 
@@ -78,6 +91,19 @@ runc leaks real hardware specs straight through `/proc`, useful for fingerprinti
 | `io_uring_setup` | denied, errno 1 (`EPERM` — a seccomp rule, which can be turned off with `--security-opt seccomp=unconfined`) | denied, errno 38 (`ENOSYS` — not implemented at all, nothing to misconfigure) |
 
 With identical, *unhardened* settings, runc still let the container open a raw socket (able to craft arbitrary packets), while gVisor refused it outright. The `io_uring` errno difference is the clearest structural point: runc's "permission denied" is a configurable seccomp rule; gVisor's "function not found" means the syscall path doesn't exist in its kernel, independent of any flag someone could flip.
+
+## LLM-written version: same results, the model never knew
+
+Run with `qwen3:14b` via Ollama, given only a plain-English description of each probe (e.g. *"Write a short Python script that prints what kernel/OS version the script is currently running on..."*) — not told anything about runc or gVisor. The model wrote different code each time (its own variable names, its own `libc.syscall()` vs named `ctypes` bindings), but the outcome matched the hardcoded version exactly:
+
+| | runc (LLM-written) | gVisor (LLM-written) |
+|---|---|---|
+| Test 1: kernel | `6.18.54.1-microsoft-standard-WSL2` (real) | `4.19.0-gvisor` (fake) |
+| Test 2: CPU/RAM | Real CPU model, `15919000` kB | `unknown` CPU, `262144` kB |
+| Test 3: `unshare` | denied (`-1`) | succeeds (`0`, contained in gVisor's own kernel) |
+| Test 4: raw socket | **"Raw ICMP socket succeeded"** | **"Raw ICMP socket failed: Operation not permitted"** |
+
+The point: the model had no idea it was being run under a different runtime, and no way to tell from inside the sandbox that its own `platform.release()` call was lying to it. Identical instructions, identical intent, different outcome purely because of which runtime executed the code — which is exactly why this isn't something an LLM's own judgment, prompting, or guardrails can fix. It has to be enforced at the sandbox layer.
 
 ## Net takeaway
 
